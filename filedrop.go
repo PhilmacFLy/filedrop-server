@@ -234,7 +234,7 @@ func uploadFileHandler(w http.ResponseWriter, r *http.Request) {
 	for cont {
 		cont, err = exists(fp)
 		if err != nil {
-			http.Error(w, "Authentication failed", http.StatusUnauthorized)
+			http.Error(w, "Error checking for existing file", http.StatusBadRequest)
 			log.Println("Error checking file: ", err)
 			return
 		}
@@ -301,6 +301,67 @@ func uploadFileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteFileHandler(w http.ResponseWriter, r *http.Request) {
+	filename := r.Header.Get("Filename")
+	xfilename := r.Header.Get("X-Filename")
+
+	if xfilename != "" {
+		filename = xfilename
+	}
+
+	if filename == "" {
+		http.Error(w, "Empty Filename given", http.StatusBadRequest)
+		return
+	}
+
+	fn, err := base64.StdEncoding.DecodeString(filename)
+	if err != nil {
+		http.Error(w, "Error while decoding base64:"+err.Error(), http.StatusBadRequest)
+		return
+	}
+	filename = strings.Replace(string(fn), " ", "_", -1)
+
+	if len(filename) > 255 {
+		http.Error(w, "Filename exceeds 255 Letters", http.StatusBadRequest)
+		return
+	}
+
+	fp := filepath.FromSlash(conf.Droplocation + "/" + filename)
+
+	cont, err := exists(fp)
+	if err != nil {
+		http.Error(w, "Error checking for existing file", http.StatusBadRequest)
+		log.Println("Error checking file: ", err)
+		return
+	}
+
+	if !cont {
+		http.Error(w, "File does not exist", http.StatusBadRequest)
+		log.Println("File not found")
+		return
+	}
+
+	u, _, _ := getUserfromRequest(r)
+
+	var finfo fileinfo
+
+	err = finfo.load(filename)
+	if err != nil {
+		http.Error(w, "Error loadin Fileinfo:"+err.Error(), http.StatusBadRequest)
+		log.Println("Error loading fileinfo", err)
+		return
+	}
+
+	if finfo.Creator != u {
+		http.Error(w, "You're not the owner of this file", http.StatusUnauthorized)
+		log.Println("Unautherized file deletion attempt")
+		return
+	}
+
+	err = os.Remove(fp)
+	if err != nil {
+		http.Error(w, "Error removing file"+err.Error(), http.StatusInternalServerError)
+		log.Println("Error removing file", err)
+	}
 }
 
 func main() {
