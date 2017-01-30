@@ -1,0 +1,8 @@
+language: go
+
+go:
+  - master
+  
+install:
+  - go get github.com/carbocation/interpose
+  - github.com/gorilla/mux
