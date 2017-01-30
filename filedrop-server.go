@@ -59,13 +59,18 @@ func (f *fileinfo) save(name string) error {
 	return ioutil.WriteFile(path, j, 0644)
 }
 
-func (f *fileinfo) load(name string) error {
-	path := conf.Infolocation + "/files/" + name + ".json"
+func (f *fileinfo) loadfrompath(path string) error {
 	body, err := ioutil.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	err = json.Unmarshal(body, &f)
+	return err
+}
+
+func (f *fileinfo) load(name string) error {
+	path := conf.Infolocation + "/files/" + name + ".json"
+	err := f.loadfrompath(path)
 	return err
 }
 
@@ -165,7 +170,7 @@ func authMiddleware() func(http.Handler) http.Handler {
 				return
 			}
 
-			cont, err := exists(conf.Infolocation + "/users/" + u)
+			cont, err := exists(conf.Infolocation + "/users/" + u + ".json")
 
 			if err != nil {
 				http.Error(w, "Authentication failed", http.StatusUnauthorized)
@@ -190,7 +195,7 @@ func authMiddleware() func(http.Handler) http.Handler {
 
 			if ui.Password != p {
 				http.Error(w, "Authentication failed", http.StatusUnauthorized)
-				log.Println("Password missmatch")
+				log.Println("Password missmatch", ui.Password, p)
 				return
 			}
 
@@ -213,6 +218,8 @@ func uploadFileHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Empty Filename given", http.StatusBadRequest)
 		return
 	}
+
+	fmt.Println(filename)
 
 	fn, err := base64.StdEncoding.DecodeString(filename)
 	if err != nil {
@@ -243,7 +250,7 @@ func uploadFileHandler(w http.ResponseWriter, r *http.Request) {
 			it++
 			extension := filepath.Ext(filename)
 			name := filename[0 : len(filename)-len(extension)]
-			fp = filepath.FromSlash(conf.Droplocation + "/" + name + "_" + strconv.Itoa(it) + "." + extension)
+			fp = filepath.FromSlash(conf.Droplocation + "/" + name + "_" + strconv.Itoa(it) + extension)
 		}
 	}
 
@@ -365,19 +372,55 @@ func deleteFileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	conf.load("config")
+	err := conf.load("config")
+	if err != nil {
+		log.Fatal("Error loading config:", err)
+	}
 	fmt.Println(conf)
+
+	ticker := time.NewTicker(time.Minute * 1)
+	go func() {
+		for _ = range ticker.C {
+			log.Println("Deleting run started")
+			files, err := ioutil.ReadDir(conf.Infolocation + "/files/")
+			if err != nil {
+				log.Println("Error listing files:", err.Error())
+			}
+			for _, f := range files {
+				fmt.Println(f.Name())
+				fp := conf.Infolocation + "/files/" + f.Name()
+				var finfo fileinfo
+				err := finfo.loadfrompath(fp)
+				if err != nil {
+					log.Println("Error loading fileinfo:", err)
+				}
+				if time.Now().After(finfo.Expires) {
+					err := os.Remove(fp)
+					if err != nil {
+						log.Println("Error deleting fileinfo:", err)
+					}
+					extension := filepath.Ext(f.Name())
+					name := f.Name()[0 : len(f.Name())-len(extension)]
+					err = os.Remove(conf.Droplocation + name)
+					if err != nil {
+						log.Println("Error removing file:", err)
+					}
+				}
+			}
+		}
+	}()
 
 	os.MkdirAll(filepath.FromSlash(conf.Infolocation+"/users/"), 0755)
 	os.MkdirAll(filepath.FromSlash(conf.Infolocation+"/files/"), 0755)
 	os.MkdirAll(filepath.FromSlash(conf.Droplocation), 0755)
 
-	middle := interpose.New()
-	middle.Use(authMiddleware())
-
 	router := mux.NewRouter()
 	router.HandleFunc("/", uploadFileHandler).Methods("POST")
 	router.HandleFunc("/", deleteFileHandler).Methods("DELETE")
+
+	middle := interpose.New()
+	middle.Use(authMiddleware())
+	middle.UseHandler(router)
 
 	log.Fatal(http.ListenAndServe(conf.Adress, middle))
 }
