@@ -6,3 +6,10 @@ go:
 install:
   - go get github.com/carbocation/interpose
   - go get github.com/gorilla/mux
+
+notifications:
+  email: false
+ 
+ os:
+  - linux
+  - osx
